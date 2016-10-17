@@ -13,17 +13,17 @@ class Event(object):
     def __init__(self):
         """Construct the common header"""
         self.version = 1.1
-        self.event_type = "LossOfSignal"
+        self.event_type = "LossOfSignal" #should change this to something else
         self.domain = ""
         self.event_id = ""
         self.source_id = "23380d70-2c71-4e35-99e2-f43f97e4ec65"
         self.source_name = "cscf0001vm001abc001"
         self.functional_role = "SGW"
         self.reporting_entity_id = ""
-        self.reporting_entity_name = "cscf0001vm001oam001"
-        self.priority = "Normal"
-        self.start_epoch_microsec = 1413378172000000
-        self.last_epoch_micro_sec = 1413378172000000
+        self.reporting_entity_name = "cscf0001vm001oam001" # to be changed to hostname_plugin_plugin-instance name
+        self.priority = "Normal" # will be derived from event if there is one
+        self.start_epoch_microsec = 1413378172000000 # will be the interval value
+        self.last_epoch_micro_sec = 1413378172000000 # will be the interval value
         self.sequence = 0
 
     def get_json(self):
