@@ -32,5 +32,38 @@ TODO:
     </Module>
     </Plugin>
 ```
+where "/path/to/your/python/modules" is the path to where you cloned this repo
 
+##Other collectd.conf configurations
 
+Please ensure that FQDNLookup is set to false
+```
+FQDNLookup   false
+```
+
+Please ensure that the virt plugin is enabled and configured as follows
+```
+LoadPlugin virt
+
+<Plugin virt>
+        Connection "qemu:///system"
+        RefreshInterval 60
+        HostnameFormat uuid
+</Plugin>
+```
+
+Please ensure that the cpu plugin is enabled and configured as follows
+```
+LoadPlugin cpu
+
+<Plugin cpu>
+        ReportByCpu false
+        ValuesPercentage true
+</Plugin>
+```
+Please also ensure that the following plugins are enabled:
+```
+LoadPlugin disk
+LoadPlugin interface
+LoadPlugin memory
+```
