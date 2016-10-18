@@ -17,12 +17,11 @@ TODO:
 ```
 3. Modify the collectd configuration script: `/etc/collectd/collectd.conf`
 ```
-    LoadPlugin python
-    # ...
+
     <LoadPlugin python>
       Globals true
     </LoadPlugin>
-    # ...
+
     <Plugin python>
       ModulePath "/path/to/your/python/modules"
       LogTraces true
