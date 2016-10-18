@@ -91,12 +91,12 @@ class MeasurementGroup(object):
             'measurements' : self.measurement
         }
 
-class MeasurementForVfScaling(Event):
-    """MeasurementForVfScaling datatype"""
+class MeasurementsForVfScaling(Event):
+    """MeasurementsForVfScaling datatype"""
 
     def __init__(self, event_id):
         """Construct the header"""
-        super(MeasurementForVfScaling, self).__init__()
+        super(MeasurementsForVfScaling, self).__init__()
         # common attributes
         self.domain = "measurementsForVfScaling"
         self.event_id = event_id
@@ -150,7 +150,7 @@ class MeasurementForVfScaling(Event):
 
     def get_name(self):
         """Name of datatype"""
-        return "measurementForVfScaling"
+        return "measurementsForVfScaling"
 
 class Fault(Event):
     """Fault datatype"""
