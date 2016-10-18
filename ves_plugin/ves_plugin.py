@@ -265,7 +265,7 @@ class VESPlugin(object):
                     collectd.warning("virt collectD cache values are not up-to-date")
                     break
             # if values are up-to-date, create an event message
-            measurement = MeasurementForVfScaling(self.get_event_id())
+            measurement = MeasurementsForVfScaling(self.get_event_id())
             virt_vcpu_total = self.cache_get_value('virt', 'virt_cpu_total')
             measurement.aggregate_cpu_usage = virt_vcpu_total if virt_vcpu_total else 0.0
 
