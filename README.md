@@ -34,7 +34,7 @@ TODO:
 ```
 where "/path/to/your/python/modules" is the path to where you cloned this repo
 
-##VES python plugin configuration description:
+## VES python plugin configuration description:
 
 > **Note** Details of the Vendor Event Listener REST service
 
@@ -49,29 +49,30 @@ REST resources are of the form:
 {ServerRoot}/eventListener/v{apiVersion}/eventBatch`
 ```
 
-Domain *"host"*
-: VES domain name. It can be IP addresses or hostname of VES collector (default: `127.0.0.1`)
+**Domain** *"host"*
++ VES domain name. It can be IP addresses or hostname of VES collector (default: `127.0.0.1`)
 
-Port *port*
-: VES port (default: `30000`)
+**Port** *port*
++ VES port (default: `30000`)
 
-Path *"path"*
-: Used as the "optionalRoutingPath" element in the REST path (default: `empty`)
+**Path** *"path"*
++ Used as the "optionalRoutingPath" element in the REST path (default: `empty`)
 
-Topic *"path"*
-: Used as the "topicName" element in the REST  path (default: `empty`)
+**Topic** *"path"*
++ Used as the "topicName" element in the REST  path (default: `empty`)
 
-UseHttps *true|false*
-: Allow plugin to use HTTPS instead of HTTP (default: `false`)
+**UseHttps** *true|false*
++ Allow plugin to use HTTPS instead of HTTP (default: `false`)
 
-Username *"username"*
-: VES collector user name (default: `empty`)
+**Username** *"username"*
++ VES collector user name (default: `empty`)
 
-Password *"passwd"*
-: VES collector password (default: `empty`)
+**Password** *"passwd"*
++ VES collector password (default: `empty`)
 
-FunctionalRole *"role"*
-: Used as the 'functionalRole' field of 'commonEventHeader' event (default: `Collectd VES Agent`)
+**FunctionalRole** *"role"*
++ Used as the 'functionalRole' field of 'commonEventHeader' event (default: `Collectd VES Agent`)
+
 
 ##Other collectd.conf configurations
 
