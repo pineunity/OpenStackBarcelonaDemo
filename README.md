@@ -28,10 +28,50 @@ TODO:
       Interactive false
       Import "ves_plugin"
     <Module ves_plugin>
+    # VES plugin configuration (see next section below)
     </Module>
     </Plugin>
 ```
 where "/path/to/your/python/modules" is the path to where you cloned this repo
+
+##VES python plugin configuration description:
+
+> **Note** Details of the Vendor Event Listener REST service
+
+```
+REST resources are defined with respect to a ServerRoot:
+ServerRoot = https://{Domain}:{Port}/{optionalRoutingPath}
+
+REST resources are of the form:
+
+{ServerRoot}/eventListener/v{apiVersion}`
+{ServerRoot}/eventListener/v{apiVersion}/{topicName}`
+{ServerRoot}/eventListener/v{apiVersion}/eventBatch`
+```
+
+Domain *"host"*
+: VES domain name. It can be IP addresses or hostname of VES collector (default: `127.0.0.1`)
+
+Port *port*
+: VES port (default: `30000`)
+
+Path *"path"*
+: Used as the "optionalRoutingPath" element in the REST path (default: `empty`)
+
+Topic *"path"*
+: Used as the "topicName" element in the REST  path (default: `empty`)
+
+UseHttps *true|false*
+: Allow plugin to use HTTPS instead of HTTP (default: `false`)
+
+Username *"username"*
+: VES collector user name (default: `empty`)
+
+Password *"passwd"*
+: VES collector password (default: `empty`)
+
+FunctionalRole *"role"*
+: Used as the 'functionalRole' field of 'commonEventHeader' event (default: `Collectd VES Agent`)
 
 ##Other collectd.conf configurations
 

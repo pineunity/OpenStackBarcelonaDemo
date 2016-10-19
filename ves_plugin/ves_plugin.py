@@ -34,7 +34,7 @@ class Event(object):
         self.event_id = ""
         self.source_id = "23380d70-2c71-4e35-99e2-f43f97e4ec65"
         self.source_name = "cscf0001vm001abc001"
-        self.functional_role = "Collectd VES Agent"
+        self.functional_role = ""
         self.reporting_entity_id = ""
         self.reporting_entity_name = "cscf0001vm001oam001" # to be changed to hostname_plugin_plugin-instance name
         self.priority = "Normal" # will be derived from event if there is one
@@ -222,6 +222,17 @@ class VESPlugin(object):
             'interface' : {'interval' : 0.0, 'vls' : []},
             'memory' : {'interval' : 0.0, 'vls' : []}
         }
+        self.__plugin_config = {
+            'Domain' : '127.0.0.1',
+            'Port' : 30000.0,
+            'Path' : '',
+            'Username' : '',
+            'Password' : '',
+            'Topic' : '',
+            'UseHttps' : False,
+            'SendEventInterval' : 20.0,
+            'FunctionalRole' : 'Collectd VES Agent'
+        }
         self.__ves_timer = None
         self.__event_timer_interval = 20.0
         self.__lock = Lock()
@@ -304,6 +315,7 @@ class VESPlugin(object):
                         continue
                 # if values are up-to-date, create an event message
                 measurement = MeasurementsForVfScaling(self.get_event_id())
+                measurement.functional_role = self.__plugin_config['FunctionalRole']
                 # virt_cpu_total
                 virt_vcpu_total = self.cache_get_value(plugin_instance=vm_name,
                                                        plugin_name='virt', type_name='virt_cpu_total')
@@ -366,6 +378,7 @@ class VESPlugin(object):
             self.unlock()
 
     def collectd_type_to_measurements(self, vl):
+        """CollectD -> measurement convertor"""
         collectd_type_map = {
             'if_packets' : lambda value : [('if_packets-rx', value[0]), ('if_packets-tx', value[1])],
             'if_octets' : lambda value : [('if_octets-rx', value[0]), ('if_octets-tx', value[1])],
@@ -385,8 +398,18 @@ class VESPlugin(object):
 
     def config(self, config):
         """Collectd config callback"""
-        # TODO Implement python read configuration
-        pass
+        for child in config.children:
+            # check the config entry name
+            if child.key not in self.__plugin_config:
+                collectd.error("Key '{}' name is invalid".format(child.key))
+                raise RuntimeError('Configuration key name error')
+            # check the config entry value type
+            if len(child.values) == 0 or type(child.values[0]) != type(self.__plugin_config[child.key]):
+                collectd.error("Key '{}' value type should be {}".format(
+                               child.key, str(type(self.__plugin_config[child.key]))))
+                raise RuntimeError('Configuration key value error')
+            # store the value in configuration
+            self.__plugin_config[child.key] = child.values[0]
 
     def init(self):
         """Collectd init callback"""
@@ -465,6 +488,7 @@ class VESPlugin(object):
             collectd.NOTIF_OKAY : 'NORMAL'
         }
         fault = Fault(self.get_event_id())
+        fault.functional_role = self.__plugin_config['FunctionalRole']
         fault.event_severity = collectd_event_severity_map[n.severity]
         fault.specific_problem = '{}-{}'.format(n.plugin_instance, n.type_instance)
         fault.alarm_condition = n.message
