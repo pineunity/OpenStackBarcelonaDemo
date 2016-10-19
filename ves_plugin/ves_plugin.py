@@ -20,6 +20,7 @@ import sys
 import base64
 import logging
 import urllib2
+import socket
 from threading import Timer
 from threading import Lock
 
@@ -32,14 +33,14 @@ class Event(object):
         self.event_type = "Info" # use "Info" unless a notification is generated
         self.domain = ""
         self.event_id = ""
-        self.source_id = "23380d70-2c71-4e35-99e2-f43f97e4ec65"
-        self.source_name = "cscf0001vm001abc001"
+        self.source_id = ""
+        self.source_name = ""
         self.functional_role = ""
         self.reporting_entity_id = ""
-        self.reporting_entity_name = "cscf0001vm001oam001" # to be changed to hostname_plugin_plugin-instance name
+        self.reporting_entity_name = ""
         self.priority = "Normal" # will be derived from event if there is one
-        self.start_epoch_microsec = 1413378172000000 # will be the interval value
-        self.last_epoch_micro_sec = 1413378172000000 # will be the interval value
+        self.start_epoch_microsec = 0
+        self.last_epoch_micro_sec = 0
         self.sequence = 0
 
     def get_json(self):
@@ -289,7 +290,7 @@ class VESPlugin(object):
 
     def bytes_to_gb(self, bytes):
         """Convert bytes to GB"""
-        return (bytes / 1073741824.0)
+        return round((bytes / 1073741824.0), 3)
 
     def event_timer(self):
         """Event timer thread"""
@@ -315,17 +316,27 @@ class VESPlugin(object):
                 # if values are up-to-date, create an event message
                 measurement = MeasurementsForVfScaling(self.get_event_id())
                 measurement.functional_role = self.__plugin_config['FunctionalRole']
+                # fill out reporting_entity
+                reporting_entity = '{}-{}-{}'.format(socket.gethostname(), 'virt', vm_name)
+                measurement.reporting_entity_id = reporting_entity
+                measurement.reporting_entity_name = reporting_entity
                 # virt_cpu_total
                 virt_vcpu_total = self.cache_get_value(plugin_instance=vm_name,
                                                        plugin_name='virt', type_name='virt_cpu_total')
                 if len(virt_vcpu_total) > 0:
-                    measurement.aggregate_cpu_usage = virt_vcpu_total[0]['values'][0]
+                    measurement.aggregate_cpu_usage = self.cpu_ns_to_percentage(virt_vcpu_total[0])
+                    # set source as a host for virt_vcpu_total value
+                    measurement.source_id = virt_vcpu_total[0]['host']
+                    measurement.source_name = measurement.source_id
+                    # fill out EpochMicrosec (convert to us)
+                    measurement.start_epoch_microsec = (virt_vcpu_total[0]['time'] * 1000000)
                 # virt_vcp
                 virt_vcpus = self.cache_get_value(plugin_instance=vm_name,
                                                   plugin_name='virt', type_name='virt_vcpu')
                 if len(virt_vcpus) > 0:
                     for virt_vcpu in virt_vcpus:
-                        measurement.add_cpu_usage(virt_vcpu['type_instance'], virt_vcpu['values'][0])
+                        cpu_usage = self.cpu_ns_to_percentage(virt_vcpu)
+                        measurement.add_cpu_usage(virt_vcpu['type_instance'], cpu_usage)
                 # plugin interval
                 measurement.measurement_interval = self.__plugin_data_cache['virt']['interval']
                 # memory-total
@@ -376,7 +387,22 @@ class VESPlugin(object):
         finally:
             self.unlock()
 
+    def cpu_ns_to_percentage(self, vl):
+        """Convert CPU usage ns to CPU %"""
+        total = vl['values'][0]
+        total_time = vl['time']
+        pre_total = vl['pre_values'][0]
+        pre_total_time = vl['pre_time']
+        if (total_time - pre_total_time) == 0:
+            # return zero usage if time diff is zero
+            return 0.0
+        percent = (100.0 * (total - pre_total))/((total_time - pre_total_time) * 1000000000.0)
+        collectd.debug("pre_time={}, pre_value={}, time={}, value={}, cpu={}%".format(
+            pre_total_time, pre_total, total_time, total, round(percent, 2)))
+        return round(percent, 2)
+
     def collectd_type_to_measurements(self, vl):
+        """Convert collectD datatype into to_measurement type"""
         collectd_type_map = {
             'if_packets' : lambda value : [('if_packets-rx', value[0]), ('if_packets-tx', value[1])],
             'if_octets' : lambda value : [('if_octets-rx', value[0]), ('if_octets-tx', value[1])],
@@ -426,7 +452,9 @@ class VESPlugin(object):
             if (plugin_vl[index]['plugin_instance'] ==
                 vl.plugin_instance) and (plugin_vl[index]['type_instance'] ==
                     vl.type_instance) and (plugin_vl[index]['type'] == vl.type):
+                plugin_vl[index]['pre_time'] = plugin_vl[index]['time']
                 plugin_vl[index]['time'] = vl.time
+                plugin_vl[index]['pre_values'] = plugin_vl[index]['values']
                 plugin_vl[index]['values'] = vl.values
                 plugin_vl[index]['updated'] = True
                 found = True
@@ -437,8 +465,11 @@ class VESPlugin(object):
             value['plugin_instance'] = vl.plugin_instance
             value['type_instance'] = vl.type_instance
             value['values'] = vl.values
+            value['pre_values'] = vl.values
             value['type'] = vl.type
             value['time'] = vl.time
+            value['pre_time'] = vl.time
+            value['host'] = vl.host
             value['updated'] = True
             self.__plugin_data_cache[vl.plugin]['vls'].append(value)
             # update plugin interval based on one received in the value
@@ -477,9 +508,6 @@ class VESPlugin(object):
 
     def notify(self, n):
         """Collectd notification callback"""
-        # type='gauge',type_instance='link_status',plugin='ovs_events',plugin_instance='br0',
-        # host='silv-vmytnyk-nos.ir.intel.com',time=1476441572.7450583,severity=4,
-        # message='link state of "br0" interface has been changed to "UP"')
         collectd_event_severity_map = {
             collectd.NOTIF_FAILURE : 'CRITICAL',
             collectd.NOTIF_WARNING : 'WARNING',
