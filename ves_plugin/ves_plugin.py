@@ -29,12 +29,12 @@ class Event(object):
     def __init__(self):
         """Construct the common header"""
         self.version = 1.1
-        self.event_type = "LossOfSignal" #should change this to something else
+        self.event_type = "Info" # use "Info" unless a notification is generated
         self.domain = ""
         self.event_id = ""
         self.source_id = "23380d70-2c71-4e35-99e2-f43f97e4ec65"
         self.source_name = "cscf0001vm001abc001"
-        self.functional_role = "SGW"
+        self.functional_role = "Collectd VES Agent"
         self.reporting_entity_id = ""
         self.reporting_entity_name = "cscf0001vm001oam001" # to be changed to hostname_plugin_plugin-instance name
         self.priority = "Normal" # will be derived from event if there is one
@@ -111,18 +111,39 @@ class MeasurementsForVfScaling(Event):
         self.feature_usage_array = []
         self.filesystem_usage_array = []
         self.latency_distribution = []
-        self.mean_request_latency = 1
+        self.mean_request_latency = 0
         self.measurement_fields_version = 1.1
-        self.measurement_interval = 1
-        self.memory_configured = 2
-        self.memory_used = 3
-        self.number_of_media_ports_in_use = 4
-        self.request_rate = 5
-        self.vnfc_scaling_metric = 6
+        self.measurement_interval = 0
+        self.memory_configured = 0
+        self.memory_used = 0
+        self.number_of_media_ports_in_use = 0
+        self.request_rate = 0
+        self.vnfc_scaling_metric = 0
         self.v_nic_usage_array = []
 
     def add_measurement_group(self, group):
         self.additional_measurements.append(group.get_obj())
+
+    def add_cpu_usage(self, cpu_identifier, usage):
+        self.cpu_usage_array.append({
+            'cpuIdentifier' : cpu_identifier,
+            'percentUsage' : usage
+        })
+
+    def add_v_nic_usage(self, if_name, if_pkts, if_bytes):
+        self.v_nic_usage_array.append({
+            'broadcastPacketsIn' : 0.0,
+            'broadcastPacketsOut' : 0.0,
+            'multicastPacketsIn' : 0.0,
+            'multicastPacketsOut' : 0.0,
+            'unicastPacketsIn' : 0.0,
+            'unicastPacketsOut' : 0.0,
+            'vNicIdentifier' : if_name,
+            'packetsIn' : if_pkts[0],
+            'packetsOut' : if_pkts[1],
+            'bytesIn' : if_bytes[0],
+            'bytesOut' : if_bytes[1]
+        })
 
     def get_obj(self):
         """Get the object of the datatype"""
@@ -150,7 +171,7 @@ class MeasurementsForVfScaling(Event):
 
     def get_name(self):
         """Name of datatype"""
-        return "measurementsForVfScaling"
+        return "measurementsForVfScalingFields"
 
 class Fault(Event):
     """Fault datatype"""
@@ -161,6 +182,7 @@ class Fault(Event):
         # common attributes
         self.domain = "fault"
         self.event_id = event_id
+        self.event_type = "Fault"
         # fault attributes
         self.fault_fields_version = 1.1
         self.event_severity = 'NORMAL'
@@ -194,7 +216,11 @@ class VESPlugin(object):
     def __init__(self):
         """Plugin initialization"""
         self.__plugin_data_cache = {
-            'cpu' : [], 'virt' : [], 'disk' : [], 'interface' : [], 'memory' : []
+            'cpu' : {'interval' : 0.0, 'vls' : []},
+            'virt' : {'interval' : 0.0, 'vls' : []},
+            'disk' : {'interval' : 0.0, 'vls' : []},
+            'interface' : {'interval' : 0.0, 'vls' : []},
+            'memory' : {'interval' : 0.0, 'vls' : []}
         }
         self.__ves_timer = None
         self.__event_timer_interval = 20.0
@@ -251,40 +277,111 @@ class VESPlugin(object):
         except urllib2.URLError as e:
             collectd.error('Vendor Event Listener is is not reachable: {}'.format(e))
 
+    def bytes_to_gb(self, bytes):
+        """Convert bytes to GB"""
+        return (bytes / 1073741824.0)
+
     def event_timer(self):
         """Event timer thread"""
         self.lock()
         try:
-            # make sure that 'virt' plugin cache is up-to-date
-            for val in self.__plugin_data_cache['virt']:
-                #collectd.info(">>> plugin={}, plugin_instance={}, type_instance={}, type={}, time={}, values={}".
-                #format('virt', val['plugin_instance'], val['type_instance'], val['type'], val['time'],
-                #val['values']))
-                if val['updated'] == False:
-                    # one of the cache value is not up-to-date, break
-                    collectd.warning("virt collectD cache values are not up-to-date")
-                    break
-            # if values are up-to-date, create an event message
-            measurement = MeasurementsForVfScaling(self.get_event_id())
-            virt_vcpu_total = self.cache_get_value('virt', 'virt_cpu_total')
-            measurement.aggregate_cpu_usage = virt_vcpu_total if virt_vcpu_total else 0.0
+            # get list of all VMs
+            virt_vcpu_total = self.cache_get_value(plugin_name='virt', type_name='virt_cpu_total',
+                                                   mark_as_read=False)
+            vm_names = [x['plugin_instance'] for x in virt_vcpu_total]
+            for vm_name in vm_names:
+                # make sure that 'virt' plugin cache is up-to-date
+                vm_values = self.cache_get_value(plugin_name='virt', plugin_instance=vm_name,
+                                                 mark_as_read=False)
+                us_up_to_date = True
+                for vm_value in vm_values:
+                    if vm_value['updated'] == False:
+                        us_up_to_date = False
+                        break
+                if not us_up_to_date:
+                        # one of the cache value is not up-to-date, break
+                        collectd.warning("virt collectD cache values are not up-to-date for {}".format(vm_name))
+                        continue
+                # if values are up-to-date, create an event message
+                measurement = MeasurementsForVfScaling(self.get_event_id())
+                # virt_cpu_total
+                virt_vcpu_total = self.cache_get_value(plugin_instance=vm_name,
+                                                       plugin_name='virt', type_name='virt_cpu_total')
+                if len(virt_vcpu_total) > 0:
+                    measurement.aggregate_cpu_usage = virt_vcpu_total[0]['values'][0]
+                # virt_vcp
+                virt_vcpus = self.cache_get_value(plugin_instance=vm_name,
+                                                  plugin_name='virt', type_name='virt_vcpu')
+                if len(virt_vcpus) > 0:
+                    for virt_vcpu in virt_vcpus:
+                        measurement.add_cpu_usage(virt_vcpu['type_instance'], virt_vcpu['values'][0])
+                # plugin interval
+                measurement.measurement_interval = self.__plugin_data_cache['virt']['interval']
+                # memory-total
+                memory_total = self.cache_get_value(plugin_instance=vm_name, plugin_name='virt',
+                                                    type_name='memory', type_instance='total')
+                if len(memory_total) > 0:
+                    measurement.memory_configured = self.bytes_to_gb(memory_total[0]['values'][0])
+                # memory-rss
+                memory_rss = self.cache_get_value(plugin_instance=vm_name, plugin_name='virt',
+                                                  type_name='memory', type_instance='rss')
+                if len(memory_rss) > 0:
+                    measurement.memory_used = self.bytes_to_gb(memory_rss[0]['values'][0])
+                # if_packets
+                ifinfo = {}
+                if_stats = self.cache_get_value(plugin_instance=vm_name,
+                                                plugin_name='virt', type_name='if_packets')
+                if len(if_stats) > 0:
+                    for if_stat in if_stats:
+                        ifinfo[if_stat['type_instance']] = {
+                            'pkts' : (if_stat['values'][0], if_stat['values'][1])
+                        }
+                # go through all interfaces and get if_octets
+                for if_name in ifinfo.keys():
+                    if_stats = self.cache_get_value(plugin_instance=vm_name, plugin_name='virt',
+                                                    type_name='if_octets', type_instance=if_name)
+                    if len(if_stats) > 0:
+                        ifinfo[if_name]['bytes'] = (if_stats[0]['values'][0], if_stats[0]['values'][1])
+                # fill vNicUsageArray filed in the event
+                for if_name in ifinfo.keys():
+                    measurement.add_v_nic_usage(if_name, ifinfo[if_name]['pkts'], ifinfo[if_name]['bytes'])
 
-            # add host/guest values as additional measurements
-            for plugin_name in self.__plugin_data_cache.keys():
-                if plugin_name == 'virt':
-                    # skip host-only values
-                    continue;
-                for val in self.__plugin_data_cache[plugin_name]:
-                    mgroup_name = '{}-{}'.format(plugin_name, val['plugin_instance'])
-                    mgroup = MeasurementGroup(mgroup_name)
-                    mgroup_value = '{}-{}'.format(val['type'], val['type_instance'])
-                    mgroup.add_measurement(mgroup_value, str(val['values']))
-                    measurement.add_measurement_group(mgroup);
-                    val['updated'] = False
-            # send event to the VES
-            self.event_send(measurement)
+                # add host/guest values as additional measurements
+                for plugin_name in self.__plugin_data_cache.keys():
+                    if plugin_name == 'virt':
+                        # skip host-only values
+                        continue;
+                    for val in self.__plugin_data_cache[plugin_name]['vls']:
+                        mgroup_name = '{}{}'.format(plugin_name, '-{}'.format(
+                            val['plugin_instance']) if len(val['plugin_instance']) else '')
+                        mgroup = MeasurementGroup(mgroup_name)
+                        measurements = self.collectd_type_to_measurements(val)
+                        for m in measurements:
+                            mgroup.add_measurement(m[0], str(m[1]))
+                        measurement.add_measurement_group(mgroup);
+                        val['updated'] = False
+                # send event to the VES
+                self.event_send(measurement)
         finally:
             self.unlock()
+
+    def collectd_type_to_measurements(self, vl):
+        collectd_type_map = {
+            'if_packets' : lambda value : [('if_packets-rx', value[0]), ('if_packets-tx', value[1])],
+            'if_octets' : lambda value : [('if_octets-rx', value[0]), ('if_octets-tx', value[1])],
+            'if_errors' : lambda value : [('if_errors-rx', value[0]), ('if_errors-tx', value[1])],
+            'disk_octets' : lambda value : [('disk_octets-read', value[0]), ('disk_octets-write', value[1])],
+            'disk_ops' : lambda value : [('disk_ops-read', value[0]), ('disk_ops-write', value[1])],
+            'disk_merged' : lambda value : [('disk_merged-read', value[0]), ('disk_merged-write', value[1])],
+            'disk_time' : lambda value : [('disk_time-read', value[0]), ('disk_time-write', value[1])],
+            'disk_io_time' : lambda value : [('disk_io_time-io_time', value[0]), ('disk_io_time-weighted_io_time', value[1])],
+            'pending_operations' : lambda value : [('pending_operations', value[0])]
+        }
+        if vl['type'] in collectd_type_map.keys():
+            # convert collectD type to VES type
+            return collectd_type_map[vl['type']](vl['values'])
+        # do general convert
+        return [('{}-{}'.format(vl['type'], vl['type_instance']), vl['values'][0])]
 
     def config(self, config):
         """Collectd config callback"""
@@ -302,7 +399,7 @@ class VESPlugin(object):
     def update_cache_value(self, vl):
         """Update value internal collectD cache values or create new one"""
         found = False
-        plugin_vl = self.__plugin_data_cache[vl.plugin]
+        plugin_vl = self.__plugin_data_cache[vl.plugin]['vls']
         for index in xrange(len(plugin_vl)):
             # record found, so just update time the values
             if (plugin_vl[index]['plugin_instance'] ==
@@ -322,26 +419,26 @@ class VESPlugin(object):
             value['type'] = vl.type
             value['time'] = vl.time
             value['updated'] = True
-            self.__plugin_data_cache[vl.plugin].append(value)
+            self.__plugin_data_cache[vl.plugin]['vls'].append(value)
+            # update plugin interval based on one received in the value
+            self.__plugin_data_cache[vl.plugin]['interval'] = vl.interval
 
-    def cache_get_value(self, plugin_name, type_name):
+    def cache_get_value(self, plugin_name=None, plugin_instance=None,
+                        type_name=None, type_instance=None, type_names=None, mark_as_read=True):
         """Get cache value by given criteria"""
+        ret_list = []
         if plugin_name in self.__plugin_data_cache:
-            for val in self.__plugin_data_cache[plugin_name]:
-                collectd.info("plugin={}, type={}".format(plugin_name, val['type']))
-                if type_name == val['type']:
-                    val['updated'] = False
-                    return self.collectd_to_ves_type(val['type'], val['values'])
-        return None
-
-    def collectd_to_ves_type(self, type_name, value):
-        """Convert collectD type to VES"""
-        collectd_convert_type_map = {
-            'virt_cpu_total' : lambda x : int(x[0])
-        }
-        if type_name in collectd_convert_type_map.keys():
-            return collectd_convert_type_map[type_name](value)
-        return value
+            for val in self.__plugin_data_cache[plugin_name]['vls']:
+                #collectd.info("plugin={}, type={}, type_instance={}".format(
+                #    plugin_name, val['type'], val['type_instance']))
+                if (type_name == None or type_name == val['type']) and (plugin_instance == None
+                    or plugin_instance == val['plugin_instance']) and (type_instance == None
+                    or type_instance == val['type_instance']) and (type_names == None
+                    or val['type'] in type_names):
+                    if mark_as_read:
+                        val['updated'] = False
+                    ret_list.append(val)
+        return ret_list
 
     def write(self, vl, data=None):
         """Collectd write callback"""
