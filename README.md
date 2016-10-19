@@ -4,8 +4,7 @@ This repository contains a python based write plugin for VES.
 The plugin currently supports pushing platform relavent metrics through the additional measurements field for VES.
 
 TODO:
-* Remove hard coded values, these will become configuration options for the plugin.
-* Push virt plugin values in the main fields.
+* Notification Support
 
 **Please note**: Hardcoded configuration values will be modified so that they are configurable through the configuration file.
 
