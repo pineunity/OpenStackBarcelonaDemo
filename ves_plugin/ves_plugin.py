@@ -236,12 +236,7 @@ class VESPlugin(object):
         self.__ves_timer = None
         self.__event_timer_interval = 20.0
         self.__lock = Lock()
-        self.__username = ''
-        self.__password = ''
-        self.__port = 30000
-        self.__path = ''
         self.__event_id = 0
-        self.__domain = '127.0.0.1'
 
     def get_event_id(self):
         """get event id"""
@@ -272,11 +267,15 @@ class VESPlugin(object):
 
     def event_send(self, event):
         """Send event to VES"""
-        server_url = "http://{}:{}/{}eventListener/v1".format(self.__domain, self.__port,
-            '{}/'.format(self.__path) if (len(self.__path) > 0) else '')
-        collectd.debug('Vendor Event Listener is at: {}'.format(server_url))
-        credentials = base64.b64encode('{}:{}'.format(self.__username, self.__password))
-        collectd.debug('Authentication credentials are: {}'.format(credentials))
+        server_url = "http{}://{}:{}/{}eventListener/v1{}".format(
+            's' if self.__plugin_config['UseHttps'] else '', self.__plugin_config['Domain'],
+            int(self.__plugin_config['Port']), '{}/'.format(
+            '/{}'.format(self.__plugin_config['Path'])) if (len(self.__plugin_config['Path']) > 0) else '',
+            self.__plugin_config['Topic'])
+        collectd.info('Vendor Event Listener is at: {}'.format(server_url))
+        credentials = base64.b64encode('{}:{}'.format(
+            self.__plugin_config['Username'], self.__plugin_config['Password']))
+        collectd.info('Authentication credentials are: {}'.format(credentials))
         try:
             request = urllib2.Request(server_url)
             request.add_header('Authorization', 'Basic {}'.format(credentials))
@@ -284,7 +283,7 @@ class VESPlugin(object):
             collectd.debug("Sending {} to {}".format(event.get_json(), server_url))
             vel = urllib2.urlopen(request, event.get_json(), timeout=1)
         except urllib2.HTTPError as e:
-            colectd.error('Vendor Event Listener exception: {} [{}]'.format(vel.read(), vel.getcode()))
+            collectd.error('Vendor Event Listener exception: {}'.format(e))
         except urllib2.URLError as e:
             collectd.error('Vendor Event Listener is is not reachable: {}'.format(e))
 
@@ -378,7 +377,6 @@ class VESPlugin(object):
             self.unlock()
 
     def collectd_type_to_measurements(self, vl):
-        """CollectD -> measurement convertor"""
         collectd_type_map = {
             'if_packets' : lambda value : [('if_packets-rx', value[0]), ('if_packets-tx', value[1])],
             'if_octets' : lambda value : [('if_octets-rx', value[0]), ('if_octets-tx', value[1])],
