@@ -18,9 +18,9 @@ import collectd
 import json
 import sys
 import base64
-import logging
 import urllib2
 import socket
+import time
 from threading import Timer
 from threading import Lock
 
@@ -218,6 +218,7 @@ class VESPlugin(object):
         """Plugin initialization"""
         self.__plugin_data_cache = {
             'cpu' : {'interval' : 0.0, 'vls' : []},
+            'cpu-aggregation' : {'interval' : 0.0, 'vls' : []},
             'virt' : {'interval' : 0.0, 'vls' : []},
             'disk' : {'interval' : 0.0, 'vls' : []},
             'interface' : {'interval' : 0.0, 'vls' : []},
@@ -232,8 +233,10 @@ class VESPlugin(object):
             'Topic' : '',
             'UseHttps' : False,
             'SendEventInterval' : 20.0,
-            'FunctionalRole' : 'Collectd VES Agent'
+            'FunctionalRole' : 'Collectd VES Agent',
+            'GuestRunning' : False
         }
+        self.__host_name = None
         self.__ves_timer = None
         self.__event_timer_interval = 20.0
         self.__lock = Lock()
@@ -292,10 +295,70 @@ class VESPlugin(object):
         """Convert bytes to GB"""
         return round((bytes / 1073741824.0), 3)
 
+    def get_hostname(self):
+        if len(self.__host_name):
+            return self.__host_name
+        return socket.gethostname()
+
     def event_timer(self):
         """Event timer thread"""
         self.lock()
         try:
+            if (self.__plugin_config['GuestRunning']):
+                # if we running on a guest only, send 'additionalMeasurements' only
+                measurement = MeasurementsForVfScaling(self.get_event_id())
+                measurement.functional_role = self.__plugin_config['FunctionalRole']
+                # add host/guest values as additional measurements
+                self.fill_additional_measurements(measurement, exclude_plugins=[
+                    'cpu', 'cpu-aggregation', 'memory', 'disk', 'interface', 'virt'])
+                # nothing to send if no additional measurements
+                # fill out reporting & source entities
+                reporting_entity = self.get_hostname()
+                measurement.reporting_entity_id = reporting_entity
+                measurement.reporting_entity_name = reporting_entity
+                measurement.source_id = reporting_entity
+                measurement.source_name = measurement.source_id
+                measurement.start_epoch_microsec = (time.time() * 1000000)
+                measurement.measurement_interval = self.__plugin_config['SendEventInterval']
+                # total CPU
+                total_cpu_system = self.cache_get_value(plugin_name='cpu-aggregation', type_instance='system')
+                total_cpu_user = self.cache_get_value(plugin_name='cpu-aggregation', type_instance='user')
+                measurement.aggregate_cpu_usage = round(total_cpu_system[0]['values'][0] +
+                                                    total_cpu_user[0]['values'][0], 2)
+                # CPU per each instance
+                cpux_system = self.cache_get_value(plugin_name='cpu', type_instance='system',
+                                                  mark_as_read = False)
+                for cpu_inst in [x['plugin_instance'] for x in cpux_system]:
+                    cpu_system = self.cache_get_value(plugin_name='cpu',
+                                                      plugin_instance=cpu_inst, type_instance='system')
+                    cpu_user = self.cache_get_value(plugin_name='cpu',
+                                                      plugin_instance=cpu_inst, type_instance='user')
+                    cpu_usage = round(cpu_system[0]['values'][0] + cpu_user[0]['values'][0], 2)
+                    measurement.add_cpu_usage(cpu_inst, cpu_usage)
+                # fill memory used
+                memory_used = self.cache_get_value(plugin_name='memory', type_name='memory', type_instance='used')
+                if len(memory_used) > 0:
+                    measurement.memory_used = self.bytes_to_gb(memory_used[0]['values'][0])
+                # if_packets
+                ifinfo = {}
+                if_stats = self.cache_get_value(plugin_name='interface', type_name='if_packets')
+                if len(if_stats) > 0:
+                    for if_stat in if_stats:
+                        ifinfo[if_stat['plugin_instance']] = {
+                            'pkts' : (if_stat['values'][0], if_stat['values'][1])
+                        }
+                # go through all interfaces and get if_octets
+                for if_name in ifinfo.keys():
+                    if_stats = self.cache_get_value(plugin_instance=if_name, plugin_name='interface',
+                                                    type_name='if_octets')
+                    if len(if_stats) > 0:
+                        ifinfo[if_name]['bytes'] = (if_stats[0]['values'][0], if_stats[0]['values'][1])
+                # fill vNicUsageArray filed in the event
+                for if_name in ifinfo.keys():
+                    measurement.add_v_nic_usage(if_name, ifinfo[if_name]['pkts'], ifinfo[if_name]['bytes'])
+                # send event to the VES
+                self.event_send(measurement)
+                return
             # get list of all VMs
             virt_vcpu_total = self.cache_get_value(plugin_name='virt', type_name='virt_cpu_total',
                                                    mark_as_read=False)
@@ -317,7 +380,7 @@ class VESPlugin(object):
                 measurement = MeasurementsForVfScaling(self.get_event_id())
                 measurement.functional_role = self.__plugin_config['FunctionalRole']
                 # fill out reporting_entity
-                reporting_entity = '{}-{}-{}'.format(socket.gethostname(), 'virt', vm_name)
+                reporting_entity = '{}-{}-{}'.format(self.get_hostname(), 'virt', vm_name)
                 measurement.reporting_entity_id = reporting_entity
                 measurement.reporting_entity_name = reporting_entity
                 # virt_cpu_total
@@ -367,25 +430,30 @@ class VESPlugin(object):
                 # fill vNicUsageArray filed in the event
                 for if_name in ifinfo.keys():
                     measurement.add_v_nic_usage(if_name, ifinfo[if_name]['pkts'], ifinfo[if_name]['bytes'])
-
                 # add host/guest values as additional measurements
-                for plugin_name in self.__plugin_data_cache.keys():
-                    if plugin_name == 'virt':
-                        # skip host-only values
-                        continue;
-                    for val in self.__plugin_data_cache[plugin_name]['vls']:
-                        mgroup_name = '{}{}'.format(plugin_name, '-{}'.format(
-                            val['plugin_instance']) if len(val['plugin_instance']) else '')
-                        mgroup = MeasurementGroup(mgroup_name)
-                        measurements = self.collectd_type_to_measurements(val)
-                        for m in measurements:
-                            mgroup.add_measurement(m[0], str(m[1]))
-                        measurement.add_measurement_group(mgroup);
-                        val['updated'] = False
+                self.fill_additional_measurements(measurement, ['virt'])
                 # send event to the VES
                 self.event_send(measurement)
         finally:
             self.unlock()
+
+    def fill_additional_measurements(self, measurement, exclude_plugins=None):
+        """Fill out addition measurement filed with host/guets values"""
+        # add host/guest values as additional measurements
+        for plugin_name in self.__plugin_data_cache.keys():
+            if (exclude_plugins != None and plugin_name in exclude_plugins):
+                # skip host-only values
+                continue;
+            for val in self.__plugin_data_cache[plugin_name]['vls']:
+                if val['updated']:
+                    mgroup_name = '{}{}'.format(plugin_name, '-{}'.format(
+                        val['plugin_instance']) if len(val['plugin_instance']) else '')
+                    mgroup = MeasurementGroup(mgroup_name)
+                    measurements = self.collectd_type_to_measurements(val)
+                    for m in measurements:
+                        mgroup.add_measurement(m[0], str(m[1]))
+                    measurement.add_measurement_group(mgroup);
+                    val['updated'] = False
 
     def cpu_ns_to_percentage(self, vl):
         """Convert CPU usage ns to CPU %"""
@@ -418,7 +486,8 @@ class VESPlugin(object):
             # convert collectD type to VES type
             return collectd_type_map[vl['type']](vl['values'])
         # do general convert
-        return [('{}-{}'.format(vl['type'], vl['type_instance']), vl['values'][0])]
+        return [('{}{}'.format(vl['type'], '-{}'.format(vl['type_instance'])
+            if len(vl['type_instance']) > 0 else ''), vl['values'][0])]
 
     def config(self, config):
         """Collectd config callback"""
@@ -446,6 +515,8 @@ class VESPlugin(object):
     def update_cache_value(self, vl):
         """Update value internal collectD cache values or create new one"""
         found = False
+        if vl.plugin not in self.__plugin_data_cache:
+             self.__plugin_data_cache[vl.plugin] = {'vls': []}
         plugin_vl = self.__plugin_data_cache[vl.plugin]['vls']
         for index in xrange(len(plugin_vl)):
             # record found, so just update time the values
@@ -500,11 +571,21 @@ class VESPlugin(object):
             # collectd.Values(type='cpu',type_instance='interrupt',
             # plugin='cpu',plugin_instance='25',host='localhost',
             # time=1476694097.022873,interval=10.0,values=[0])
-            if vl.plugin in self.__plugin_data_cache.keys():
-                # update the cache values
-                self.update_cache_value(vl)
+            if vl.plugin == 'ves_plugin':
+                # store the host name and unregister callback
+                self.__host_name = vl.host
+                collectd.unregister_read(self.read)
+                return
+            # update the cache values
+            self.update_cache_value(vl)
         finally:
             self.unlock()
+
+    def read(self, data=None):
+        """Collectd read callback. Use this callback to get host name"""
+        vl = collectd.Values(type='gauge')
+        vl.plugin='ves_plugin'
+        vl.dispatch(values=[0])
 
     def notify(self, n):
         """Collectd notification callback"""
@@ -531,6 +612,7 @@ plugin_instance = VESPlugin()
 # Register plugin callbacks
 collectd.register_config(plugin_instance.config)
 collectd.register_init(plugin_instance.init)
+collectd.register_read(plugin_instance.read)
 collectd.register_write(plugin_instance.write)
 collectd.register_notification(plugin_instance.notify)
 collectd.register_shutdown(plugin_instance.shutdown)

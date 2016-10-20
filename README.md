@@ -72,6 +72,10 @@ REST resources are of the form:
 **FunctionalRole** *"role"*
 + Used as the 'functionalRole' field of 'commonEventHeader' event (default: `Collectd VES Agent`)
 
+**GuestRunning** *true|false*
++ This option is used if the collectd is running on a guest machine, e.g this option should be set
+to `true` in this case. Defaults to `false`.
+
 
 ##Other collectd.conf configurations
 
@@ -80,7 +84,8 @@ Please ensure that FQDNLookup is set to false
 FQDNLookup   false
 ```
 
-Please ensure that the virt plugin is enabled and configured as follows
+Please ensure that the virt plugin is enabled and configured as follows. This configuration
+is is required only on a host side ('GuestRunning' = false).
 ```
 LoadPlugin virt
 
@@ -100,6 +105,28 @@ LoadPlugin cpu
         ValuesPercentage true
 </Plugin>
 ```
+Please ensure that the aggregation plugin is enabled and configured as follows
+```
+LoadPlugin aggregation
+
+<Plugin aggregation>
+        <Aggregation>
+                Plugin "cpu"
+                Type "percent"
+                GroupBy "Host"
+                GroupBy "TypeInstance"
+                SetPlugin "cpu-aggregation"
+                CalculateAverage true
+        </Aggregation>
+</Plugin>
+```
+
+If plugin is running on a guest side, it is important to enable uuid plugin too. In this case
+the hostname in event message will be represented as UUID instead of system host name.
+```
+LoadPlugin uuid
+```
+
 Please also ensure that the following plugins are enabled:
 ```
 LoadPlugin disk
