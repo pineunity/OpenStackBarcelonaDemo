@@ -187,9 +187,9 @@ class Fault(Event):
         # fault attributes
         self.fault_fields_version = 1.1
         self.event_severity = 'NORMAL'
-        self.event_source_type = 'port(5)'
+        self.event_source_type = 'other(0)'
         self.alarm_condition = ''
-        self.specific_problem = 'LinkDown'
+        self.specific_problem = ''
         self.vf_status = 'Active'
         self.alarm_interface_a = ''
         self.alarm_additional_information = []
@@ -311,7 +311,6 @@ class VESPlugin(object):
                 # add host/guest values as additional measurements
                 self.fill_additional_measurements(measurement, exclude_plugins=[
                     'cpu', 'cpu-aggregation', 'memory', 'disk', 'interface', 'virt'])
-                # nothing to send if no additional measurements
                 # fill out reporting & source entities
                 reporting_entity = self.get_hostname()
                 measurement.reporting_entity_id = reporting_entity
@@ -446,12 +445,14 @@ class VESPlugin(object):
                 continue;
             for val in self.__plugin_data_cache[plugin_name]['vls']:
                 if val['updated']:
-                    mgroup_name = '{}{}'.format(plugin_name, '-{}'.format(
-                        val['plugin_instance']) if len(val['plugin_instance']) else '')
+                    mgroup_name = '{}{}{}'.format(plugin_name,
+                        '-{}'.format(val['plugin_instance']) if len(val['plugin_instance']) else '',
+                        '-{}'.format(val['type_instance']) if len(val['type_instance']) else '')
                     mgroup = MeasurementGroup(mgroup_name)
-                    measurements = self.collectd_type_to_measurements(val)
-                    for m in measurements:
-                        mgroup.add_measurement(m[0], str(m[1]))
+                    ds = collectd.get_dataset(val['type'])
+                    for index in xrange(len(ds)):
+                        mname = '{}-{}'.format(val['type'], ds[index][0])
+                        mgroup.add_measurement(mname, str(val['values'][index]))
                     measurement.add_measurement_group(mgroup);
                     val['updated'] = False
 
@@ -468,26 +469,6 @@ class VESPlugin(object):
         collectd.debug("pre_time={}, pre_value={}, time={}, value={}, cpu={}%".format(
             pre_total_time, pre_total, total_time, total, round(percent, 2)))
         return round(percent, 2)
-
-    def collectd_type_to_measurements(self, vl):
-        """Convert collectD datatype into to_measurement type"""
-        collectd_type_map = {
-            'if_packets' : lambda value : [('if_packets-rx', value[0]), ('if_packets-tx', value[1])],
-            'if_octets' : lambda value : [('if_octets-rx', value[0]), ('if_octets-tx', value[1])],
-            'if_errors' : lambda value : [('if_errors-rx', value[0]), ('if_errors-tx', value[1])],
-            'disk_octets' : lambda value : [('disk_octets-read', value[0]), ('disk_octets-write', value[1])],
-            'disk_ops' : lambda value : [('disk_ops-read', value[0]), ('disk_ops-write', value[1])],
-            'disk_merged' : lambda value : [('disk_merged-read', value[0]), ('disk_merged-write', value[1])],
-            'disk_time' : lambda value : [('disk_time-read', value[0]), ('disk_time-write', value[1])],
-            'disk_io_time' : lambda value : [('disk_io_time-io_time', value[0]), ('disk_io_time-weighted_io_time', value[1])],
-            'pending_operations' : lambda value : [('pending_operations', value[0])]
-        }
-        if vl['type'] in collectd_type_map.keys():
-            # convert collectD type to VES type
-            return collectd_type_map[vl['type']](vl['values'])
-        # do general convert
-        return [('{}{}'.format(vl['type'], '-{}'.format(vl['type_instance'])
-            if len(vl['type_instance']) > 0 else ''), vl['values'][0])]
 
     def config(self, config):
         """Collectd config callback"""
@@ -595,9 +576,22 @@ class VESPlugin(object):
             collectd.NOTIF_OKAY : 'NORMAL'
         }
         fault = Fault(self.get_event_id())
+        # fill out common header
+        fault.event_type = "Notification"
         fault.functional_role = self.__plugin_config['FunctionalRole']
+        fault.reporting_entity_id = self.get_hostname()
+        fault.reporting_entity_name = self.get_hostname()
+        fault.source_id = self.get_hostname()
+        fault.source_name = self.get_hostname()
+        fault.start_epoch_microsec = (n.time * 1000000)
+        fault.last_epoch_micro_sec = fault.start_epoch_microsec
+        # fill out fault header
         fault.event_severity = collectd_event_severity_map[n.severity]
-        fault.specific_problem = '{}-{}'.format(n.plugin_instance, n.type_instance)
+        fault.specific_problem = '{}{}'.format('{}-'.format(n.plugin_instance
+            if len(n.plugin_instance) else ''), n.type_instance)
+        fault.alarm_interface_a = '{}{}'.format(n.plugin, '-{}'.format(
+            n.plugin_instance if len(n.plugin_instance) else ''))
+        fault.event_source_type = 'virtualMachine(8)' if self.__plugin_config['GuestRunning'] else 'host(3)'
         fault.alarm_condition = n.message
         self.event_send(fault)
 

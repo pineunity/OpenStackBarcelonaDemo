@@ -3,9 +3,6 @@ This repository contains a python based write plugin for VES.
 
 The plugin currently supports pushing platform relavent metrics through the additional measurements field for VES.
 
-TODO:
-* Notification Support
-
 **Please note**: Hardcoded configuration values will be modified so that they are configurable through the configuration file.
 
 ##Installation Instructions:
@@ -126,6 +123,14 @@ the hostname in event message will be represented as UUID instead of system host
 ```
 LoadPlugin uuid
 ```
+If custom UUID needs to be provided, the following configuration is required in collectd.conf
+file:
+```
+<Plugin uuid>
+        UUIDFile "/etc/uuid"
+</Plugin>
+```
+Where "/etc/uuid" is a file containing custom UUID.
 
 Please also ensure that the following plugins are enabled:
 ```
@@ -133,3 +138,28 @@ LoadPlugin disk
 LoadPlugin interface
 LoadPlugin memory
 ```
+
+##VES plugin notification example
+
+A good example of collectD notification is monitoring of CPU load on a host or guest using
+'threshold' plugin. The following configuration will setup VES plugin to send 'Fault'
+event every time a CPU idle value is out of range (e.g.: WARNING: CPU-IDLE < 50%, CRITICAL:
+CPU-IDLE < 30%) and send 'Fault' NORMAL event if CPU idle value is back to normal.
+```
+LoadPlugin threshold
+
+<Plugin "threshold">
+    <Plugin "cpu-aggregation">
+        <Type "percent">
+            WarningMin    50.0
+            WarningMax   100.0
+            FailureMin    30.0
+            FailureMax   100.0
+            Instance "idle"
+            Hits 1
+        </Type>
+    </Plugin>
+</Plugin>
+```
+More detailed information on how to configure collectD thresholds(memory, cpu etc.) can be found here at
+[collectd-threshold.5](https://collectd.org/documentation/manpages/collectd-threshold.5.shtml)
